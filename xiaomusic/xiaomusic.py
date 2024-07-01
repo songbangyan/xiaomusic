@@ -34,7 +34,6 @@ from xiaomusic.utils import (
     find_best_match,
     fuzzyfinder,
     get_local_music_duration,
-    get_random,
     get_web_music_duration,
     parse_cookie_string,
     walk_to_depth,
@@ -308,11 +307,25 @@ class XiaoMusic:
         except Exception as e:
             self.log.error(f"Execption {e}")
 
+    async def get_if_xiaoai_is_playing(self):
+        playing_info = await self.mina_service.player_get_status(self.device_id)
+        # WTF xiaomi api
+        is_playing = (
+            json.loads(playing_info.get("data", {}).get("info", "{}")).get("status", -1)
+            == 1
+        )
+        return is_playing
+
+    async def stop_if_xiaoai_is_playing(self):
+        is_playing = await self.get_if_xiaoai_is_playing()
+        if is_playing:
+            # stop it
+            ret = await self.mina_service.player_stop(self.device_id)
+            self.log.debug(f"force_stop_xiaoai player_stop ret:{ret}")
+
     async def force_stop_xiaoai(self):
         ret = await self.mina_service.player_pause(self.device_id)
         self.log.debug(f"force_stop_xiaoai player_pause ret:{ret}")
-        # ret = await self.mina_service.player_stop(self.device_id)
-        # self.log.debug(f"force_stop_xiaoai player_stop ret:{ret}")
 
     # 是否在下载中
     def is_downloading(self):
@@ -629,7 +642,7 @@ class XiaoMusic:
         opvalue = self.check_full_match_cmd(query, ctrl_panel)
         if opvalue:
             self.log.info(f"完全匹配指令. query:{query} opvalue:{opvalue}")
-            return (opvalue, None)
+            return (opvalue, "")
 
         for opkey in self.config.key_match_order:
             patternarg = rf"(.*){opkey}(.*)"
@@ -673,36 +686,16 @@ class XiaoMusic:
                 return True
         return False
 
-    async def _play_by_music_url(self, device_id, url):
-        audio_id = get_random(30)
-        audio_type = ""
-        if self.config.hardware in ["LX04", "X10A", "X08A"]:
-            audio_type = "MUSIC"
-        music = {
-            "payload": {
-                "audio_items": [
-                    {"item_id": {"audio_id": audio_id}, "stream": {"url": url}}
-                ],
-                "audio_type": audio_type,
-            }
-        }
-        return await self.mina_service.ubus_request(
-            device_id,
-            "player_play_music",
-            "mediaplayer",
-            {"startaudioid": audio_id, "music": json.dumps(music)},
-        )
-
     async def play_url(self, **kwargs):
         url = kwargs.get("arg1", "")
         if self.config.use_music_api:
-            ret = await self._play_by_music_url(self.device_id, url)
-            self.log.debug(
+            ret = await self.play_by_music_url(self.device_id, url)
+            self.log.info(
                 f"play_url play_by_music_url {self.config.hardware}. ret:{ret} url:{url}"
             )
         else:
             ret = await self.mina_service.play_by_url(self.device_id, url)
-            self.log.debug(
+            self.log.info(
                 f"play_url play_by_url {self.config.hardware}. ret:{ret} url:{url}"
             )
         return ret
@@ -1018,3 +1011,37 @@ class XiaoMusic:
         self.new_record_event.set()
         result = await future
         return result
+
+    async def play_by_music_url(self, deviceId, url, _type=2):
+        self.log.info(f"play_by_music_url url:{url}, type:{_type}")
+        audio_type = ""
+        if _type == 1:
+            # If set to MUSIC, the light will be on
+            audio_type = "MUSIC"
+        audio_id = "1741636975854617441"
+        music = {
+            "payload": {
+                "audio_items": [
+                    {"item_id": {"audio_id": audio_id}, "stream": {"url": url}}
+                ],
+                "audio_type": audio_type,
+            }
+        }
+        return await self.mina_service.ubus_request(
+            deviceId,
+            "player_play_music",
+            "mediaplayer",
+            {"startaudioid": audio_id, "music": json.dumps(music)},
+        )
+
+    async def debug_play_by_music_url(self, arg1=None):
+        if arg1 is None:
+            arg1 = {}
+        data = arg1
+        self.log.info(f"debug_play_by_music_url: {data}")
+        return await self.mina_service.ubus_request(
+            self.device_id,
+            "player_play_music",
+            "mediaplayer",
+            data,
+        )
